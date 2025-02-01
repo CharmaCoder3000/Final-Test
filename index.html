@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connect with Friends</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.3.1/peerjs.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; background-color: silver; }
+        h2 { font-family: Comic Sans MS; font-size: 50px; color: gold; }
+        button, input { font-family: Comic Sans MS; background-color: silver; border: 2px solid black; padding: 10px; margin: 5px; font-size: 16px; cursor: pointer; border-radius: 5px; }
+        input { background-color: gold; }
+        .video-container {
+            width: 70%;
+            display: inline-block;
+            margin: 10px;
+            position: relative;
+            text-align: center;
+            border: 2px solid black;
+            background-color: gold;
+        }
+        video, .profile-picture {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        .profile-picture {
+            display: none;
+            object-fit: cover;
+        }
+        .video-container .controls {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            display: flex;
+            gap: 5px;
+        }
+        .user-name {
+            position: absolute;
+            top: 5px;
+            left: 5px;
+            background: rgba(0, 0, 0, 0.6);
+            color: white;
+            padding: 3px 8px;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        #localVideo { width: 25%; }
+        #chat-box { width: 80%; background-color: gold; height: 150px; border: 1px solid black; padding: 10px; overflow-y: auto; text-align: left; }
+    </style>
+</head>
+<body>
+    <h2>Connect with Friends</h2>
+    <h5 id="Status">Waiting for connection...</h5>
+
+    <!-- User Profile Picture and Name Settings -->
+    <input type="text" id="userName" placeholder="Enter Your Name">
+    <input type="file" id="profilePicUpload" accept="image/*">
+    <button onclick="saveProfile()">Save Profile</button>
+
+    <div class="video-container">
+        <span class="user-name" id="localUserName"></span>
+        <img id="localProfilePic" class="profile-picture">
+        <video id="localVideo" autoplay muted></video>
+    </div>
+
+    <br>
+    <button onclick="createCallID()">Create Call ID</button>
+    <input type="text" id="callID" placeholder="Enter Call ID">
+    <button onclick="joinCall()">Join Call</button>
+
+    <div id="chat-container">
+        <h3>Chat</h3>
+        <div id="chat-box"></div>
+        <input type="text" id="chatInput" placeholder="Type a message">
+        <button onclick="sendMessage()">Send</button>
+    </div>
+
+    <script>
+        let localStream;
+        let peer = new Peer();
+        let chatConnections = [];
+        let connections = [];
+        let isHost = false;
+        let participants = {};
+
+        // Load saved profile info
+        window.onload = function () {
+            if (localStorage.getItem("userName")) {
+                document.getElementById("userName").value = localStorage.getItem("userName");
+                document.getElementById("localUserName").innerText = localStorage.getItem("userName");
+            }
+            if (localStorage.getItem("profilePic")) {
+                document.getElementById("localProfilePic").src = localStorage.getItem("profilePic");
+            }
+        };
+
+        function saveProfile() {
+            let name = document.getElementById("userName").value;
+            let file = document.getElementById("profilePicUpload").files[0];
+
+            if (name) {
+                localStorage.setItem("userName", name);
+                document.getElementById("localUserName").innerText = name;
+            }
+
+            if (file) {
+                let reader = new FileReader();
+                reader.onload = function (e) {
+                    localStorage.setItem("profilePic", e.target.result);
+                    document.getElementById("localProfilePic").src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        peer.on('open', id => {
+            console.log("Your ID: " + id);
+            document.getElementById("callID").value = id;
+        });
+
+        navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+            .then(stream => {
+                localStream = stream;
+                document.getElementById("localVideo").srcObject = stream;
+            })
+            .catch(() => {
+                document.getElementById("localProfilePic").style.display = "block";
+                document.getElementById("localVideo").style.display = "none";
+            });
+
+        peer.on('call', call => {
+            call.answer(localStream);
+            call.on('stream', remoteStream => {
+                addRemoteStream(call.peer, remoteStream);
+            });
+        });
+
+        peer.on('connection', connection => {
+            connection.on('open', () => {
+                chatConnections.push(connection);
+                addUser(connection.peer);
+            });
+
+            connection.on('close', () => removeUser(connection.peer));
+        });
+
+        function createCallID() {
+            isHost = true;
+            alert("Share this Call ID: " + peer.id);
+        }
+
+        function joinCall() {
+            let id = document.getElementById("callID").value;
+            if (!id || id === peer.id) return alert("Enter a valid Call ID!");
+
+            let call = peer.call(id, localStream);
+            call.on('stream', remoteStream => addRemoteStream(id, remoteStream));
+
+            let connection = peer.connect(id);
+            connection.on('open', () => {
+                chatConnections.push(connection);
+                addUser(id);
+            });
+
+            connection.on('close', () => removeUser(id));
+        }
+
+        function addRemoteStream(peerID, stream) {
+            let videoContainer = document.createElement("div");
+            videoContainer.classList.add("video-container");
+
+            let userNameLabel = document.createElement("span");
+            userNameLabel.classList.add("user-name");
+            userNameLabel.innerText = peerID;
+
+            let videoElement = document.createElement("video");
+            videoElement.autoplay = true;
+            videoElement.srcObject = stream;
+
+            let profilePic = document.createElement("img");
+            profilePic.classList.add("profile-picture");
+
+            if (!stream.active) {
+                videoElement.style.display = "none";
+                profilePic.style.display = "block";
+                profilePic.src = localStorage.getItem("profilePic") || ""; 
+            }
+
+            if (isHost) {
+                let muteButton = document.createElement("button");
+                muteButton.textContent = "Mute";
+                muteButton.onclick = () => mutePeer(peerID);
+
+                let kickButton = document.createElement("button");
+                kickButton.textContent = "Kick";
+                kickButton.onclick = () => kickPeer(peerID);
+
+                let controls = document.createElement("div");
+                controls.classList.add("controls");
+                controls.appendChild(muteButton);
+                controls.appendChild(kickButton);
+                videoContainer.appendChild(controls);
+            }
+
+            videoContainer.appendChild(userNameLabel);
+            videoContainer.appendChild(profilePic);
+            videoContainer.appendChild(videoElement);
+            document.body.appendChild(videoContainer);
+        }
+
+        function mutePeer(peerID) {
+            let conn = chatConnections.find(c => c.peer === peerID);
+            if (conn) conn.send("MUTED");
+        }
+
+        function kickPeer(peerID) {
+            let conn = chatConnections.find(c => c.peer === peerID);
+            if (conn) conn.close();
+            removeUser(peerID);
+        }
+    </script>
+</body>
+</html>
